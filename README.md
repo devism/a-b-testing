@@ -2,7 +2,8 @@
 
 A full-stack A/B testing and feature flag demo built with Next.js App Router, PostHog, and Postgres. Built to demonstrate real growth engineering concepts: experiment design, statistical significance testing, and conversion tracking.
 
-![Dashboard screenshot showing conversion rates by variant with significance indicators]
+![Dashboard](/.github/images/dashboard.jpeg)
+
 
 ## What it does
 
