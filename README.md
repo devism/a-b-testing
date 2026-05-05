@@ -1,36 +1,166 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Flowmetric — A/B Testing Platform
 
-## Getting Started
+A full-stack A/B testing and feature flag demo built with Next.js App Router, PostHog, and Postgres. Built to demonstrate real growth engineering concepts: experiment design, statistical significance testing, and conversion tracking.
 
-First, run the development server:
+![Dashboard screenshot showing conversion rates by variant with significance indicators]
+
+## What it does
+
+**Landing page** — a fake SaaS product page (Flowmetric) with two hero section variants controlled by a PostHog feature flag. Each visitor is randomly assigned to either the control or treatment variant and stays in that variant for every subsequent visit (sticky bucketing).
+
+**Conversion tracking** — clicking the "Start for free" CTA fires an event to both PostHog (for experiment analysis) and a Postgres database (for the custom dashboard).
+
+**A/B Test Dashboard** (`/dashboard`) — a live dashboard showing:
+- Impressions and conversions per variant
+- Conversion rate per variant with a bar chart
+- Statistical significance using a two-proportion z-test (p-value, confidence level)
+- Auto-refreshes every 30 seconds
+
+## How the experiment works
+
+```
+User visits /
+    ↓
+PostHog assigns distinct_id + evaluates hero-variant flag
+    ↓
+HeroWrapper (Client Component) reads flag → renders HeroA or HeroB
+    ↓
+Impression event → POST /api/track → Postgres (ab_events table)
+    ↓
+User clicks CTA
+    ↓
+Conversion event → PostHog.capture() + POST /api/track → Postgres
+    ↓
+/dashboard queries Postgres → calculates conversion rate + p-value
+```
+
+## Statistical significance
+
+The dashboard runs a **two-proportion z-test** on the conversion rates. This is the standard test used in production A/B testing platforms.
+
+- Requires a minimum of 30 impressions per variant before showing results
+- Shows p-value and confidence level (90%, 95%, 99%)
+- A result is considered significant at **p < 0.05** (95% confidence)
+
+The significance banner transitions through states as data accumulates:
+
+| State | Meaning |
+|---|---|
+| Collecting data | < 30 impressions on either variant |
+| Experiment running | ≥ 30 samples, p ≥ 0.10 |
+| Trending | p < 0.10, not yet significant |
+| Significant at 95% | p < 0.05 — safe to call a winner |
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16 (App Router) |
+| Language | TypeScript |
+| Styling | Tailwind CSS v4 |
+| Feature flags / A/B | PostHog |
+| Database | Postgres (Neon) |
+| Charts | Recharts |
+| Deployment | Vercel |
+
+## Project structure
+
+```
+app/
+  page.tsx              # Landing page (Server Component)
+  dashboard/page.tsx    # A/B dashboard (Server Component, force-dynamic)
+  api/
+    track/route.ts      # POST: record impression or conversion
+    stats/route.ts      # GET: aggregated stats per variant
+components/
+  HeroA.tsx             # Variant A — control hero section
+  HeroB.tsx             # Variant B — treatment hero section
+  HeroWrapper.tsx       # Client Component: reads PostHog flag, picks variant
+  CTAButton.tsx         # Client Component: tracks clicks to PostHog + Postgres
+  FeaturesSection.tsx   # Server Component: static marketing copy (zero JS)
+  ConversionChart.tsx   # Client Component: Recharts bar chart
+  SignificanceBanner.tsx # Significance status indicator
+  AutoRefresh.tsx       # Client Component: calls router.refresh() every 30s
+lib/
+  db.ts                 # Postgres connection pool (server-only)
+  stats.ts              # Two-proportion z-test implementation
+providers/
+  PostHogProvider.tsx   # Client Component: wraps PostHog init
+```
+
+## Local setup
+
+**1. Clone and install**
+
+```bash
+git clone <repo>
+cd ab-testing
+npm install
+```
+
+**2. Environment variables**
+
+Copy `.env.example` to `.env.local` and fill in your values:
+
+```bash
+cp .env.example .env.local
+```
+
+```env
+NEXT_PUBLIC_POSTHOG_KEY=phc_...       # PostHog project API key
+NEXT_PUBLIC_POSTHOG_HOST=https://us.i.posthog.com
+DATABASE_URL=postgresql://...          # Postgres connection string (Neon recommended)
+```
+
+**3. Create the database table**
+
+Run this SQL in your Postgres instance (Neon SQL Editor, psql, etc.):
+
+```sql
+CREATE TABLE IF NOT EXISTS ab_events (
+  id          BIGSERIAL PRIMARY KEY,
+  event_type  TEXT        NOT NULL CHECK (event_type IN ('impression', 'conversion')),
+  variant     TEXT        NOT NULL CHECK (variant IN ('control', 'treatment')),
+  distinct_id TEXT        NOT NULL DEFAULT 'anonymous',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ab_events_variant_idx ON ab_events (variant);
+CREATE INDEX IF NOT EXISTS ab_events_event_type_idx ON ab_events (event_type);
+```
+
+**4. Set up PostHog feature flag**
+
+1. Create a free account at [posthog.com](https://posthog.com)
+2. Go to **Feature Flags** → **New feature flag**
+3. Set the key to `hero-variant` and type to **Multivariate**
+4. Add variants: `control` (50%) and `treatment` (50%)
+5. Set release conditions to **All users, 100% rollout**
+6. Save and enable the flag
+
+**5. Run the dev server**
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) for the landing page and [http://localhost:3000/dashboard](http://localhost:3000/dashboard) for the dashboard.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Generating test data
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Each browser session gets a unique PostHog `distinct_id` and is sticky-bucketed into a variant. To test both variants:
 
-## Learn More
+- Normal browser window → one variant
+- Incognito window → likely a different variant (fresh `distinct_id`)
 
-To learn more about Next.js, take a look at the following resources:
+Click the CTA in some sessions to generate conversions. The dashboard updates every 30 seconds automatically.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Deployment
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Deploy to Vercel with one command:
 
-## Deploy on Vercel
+```bash
+npx vercel
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Add the three environment variables (`NEXT_PUBLIC_POSTHOG_KEY`, `NEXT_PUBLIC_POSTHOG_HOST`, `DATABASE_URL`) in the Vercel dashboard under **Settings → Environment Variables**.
